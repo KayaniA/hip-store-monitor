@@ -6,52 +6,73 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from datetime import datetime
+import json
+import os
 
 app = Flask(__name__)
 
 # ============================================
-# ONLY THESE 2 THINGS TO SET UP
+# YOUR SETTINGS
 # ============================================
 
-# 1. Get these from pushover.net (free trial, then $5 one-time)
 PUSHOVER_USER = "uv4ar371e2hh22m23ozycabbp71mbe"
 PUSHOVER_TOKEN = "ai2ub9o9ey9jaj4hfozp6vtgom167z"
 
-# 2. The products you want
-WANTED = [
-    "nagata",
-    "keiichi", 
+# Edit these to match what you want
+WANTED_KEYWORDS = [
+    "koharu",
+    "takeyoshi", 
     "junya"
 ]
 
 # ============================================
 
 PAGE_URL = "https://m.thehipstore.co.uk/mens/brand/district-vision/"
-found_cache = set()
-cart_added = False
+
+# Store seen products permanently
+SEEN_FILE = "seen_products.json"
+seen_products = set()
+
+def load_seen_products():
+    """Load previously seen products from file"""
+    global seen_products
+    try:
+        if os.path.exists(SEEN_FILE):
+            with open(SEEN_FILE, 'r') as f:
+                seen_products = set(json.load(f))
+            print(f"Loaded {len(seen_products)} previously seen products")
+    except:
+        seen_products = set()
+
+def save_seen_products():
+    """Save seen products to file so we remember across restarts"""
+    try:
+        with open(SEEN_FILE, 'w') as f:
+            json.dump(list(seen_products), f)
+    except:
+        pass
 
 def send_notification(title, message, url=""):
-    """Send alert to your iPhone"""
+    """Send ONE notification to your iPhone"""
     try:
-        requests.post("https://api.pushover.net/1/messages.json", data={
+        response = requests.post("https://api.pushover.net/1/messages.json", data={
             "token": PUSHOVER_TOKEN,
             "user": PUSHOVER_USER,
             "title": title,
             "message": message,
             "url": url,
-            "priority": 2,
-            "retry": 30,
-            "expire": 300,
-            "sound": "persistent"
+            "priority": 1,  # High priority
+            "sound": "pushover"  # Standard notification sound
         })
-        print(f"✅ Notification sent: {title}")
+        if response.status_code == 200:
+            print(f"✅ Notification sent: {title}")
+        else:
+            print(f"❌ Notification failed: {response.text}")
     except Exception as e:
         print(f"Notification error: {e}")
 
-def check_and_buy():
-    """Check the page and auto-buy if found"""
-    global cart_added
-    
+def check_page():
+    """Check page for NEW products only"""
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -59,118 +80,76 @@ def check_and_buy():
     options.add_argument('--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15')
     
     driver = webdriver.Chrome(options=options)
+    new_found = 0
     
     try:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking...")
+        timestamp = datetime.now().strftime('%H:%M:%S')
         driver.get(PAGE_URL)
         time.sleep(3)
         
-        # Find all links
+        # Find all links on page
         links = driver.find_elements(By.TAG_NAME, "a")
         
         for link in links:
             try:
                 href = link.get_attribute("href") or ""
-                text = link.text.strip().lower()
+                text = link.text.strip()
                 combined = (text + " " + href).lower()
                 
-                for keyword in WANTED:
-                    if keyword in combined and "product" in href.lower():
+                # Check if it matches wanted keywords AND is a product link
+                for keyword in WANTED_KEYWORDS:
+                    if keyword in combined and href not in seen_products:
                         
-                        if href not in found_cache:
-                            found_cache.add(href)
-                            product_name = link.text.strip() or "District Vision Product"
+                        # Only care about actual product links
+                        if "/product/" in href.lower() or "/products/" in href.lower():
                             
-                            print(f"🎯 FOUND: {product_name}")
+                            # NEW PRODUCT FOUND!
+                            seen_products.add(href)
+                            save_seen_products()
+                            new_found += 1
+                            
+                            product_name = text or "District Vision Product"
+                            
+                            print(f"🆕 NEW PRODUCT: {product_name}")
                             print(f"   URL: {href}")
+                            print(f"   Time: {timestamp}")
                             
-                            # Go to product page
-                            driver.get(href)
-                            time.sleep(2)
-                            
-                            # Look for add to cart button
-                            page_text = driver.page_source.lower()
-                            
-                            if "add to basket" in page_text or "add to cart" in page_text:
-                                print("   ✅ IN STOCK!")
-                                
-                                # Click add to cart
-                                for btn_text in ["Add to Basket", "Add to Cart", "Add to Bag"]:
-                                    try:
-                                        btn = driver.find_element(By.XPATH, f"//*[contains(text(), '{btn_text}')]")
-                                        btn.click()
-                                        print(f"   🛒 Added to cart!")
-                                        cart_added = True
-                                        time.sleep(2)
-                                        break
-                                    except:
-                                        continue
-                                
-                                if cart_added:
-                                    # Go to checkout
-                                    driver.get("https://m.thehipstore.co.uk/basket/")
-                                    time.sleep(2)
-                                    
-                                    try:
-                                        checkout_btn = driver.find_element(By.XPATH, "//a[contains(@href, 'checkout')]")
-                                        checkout_url = checkout_btn.get_attribute("href")
-                                        driver.get(checkout_url)
-                                        time.sleep(2)
-                                        final_url = driver.current_url
-                                        
-                                        send_notification(
-                                            "🚨 READY TO BUY!",
-                                            f"{product_name}\nIn cart & checkout ready!\n\nTAP HERE TO PAY NOW",
-                                            final_url
-                                        )
-                                        
-                                        print("   🎉 CHECKOUT READY - Notification sent!")
-                                        return True
-                                    except:
-                                        send_notification(
-                                            "🛒 IN CART!",
-                                            f"{product_name}\nAdded to basket!\n\nTAP HERE TO CHECKOUT",
-                                            "https://m.thehipstore.co.uk/basket/"
-                                        )
-                                        return True
-                            else:
-                                print("   ❌ Out of stock")
+                            # Send ONE notification
+                            send_notification(
+                                "🆕 New District Vision Product!",
+                                f"{product_name}\n\nJust appeared on Hip Store\nTap to view",
+                                href
+                            )
             except:
                 continue
         
-        print("   No new products found")
-        return False
+        if new_found > 0:
+            print(f"   → {new_found} new product(s) found and notified")
+        else:
+            print(f"[{timestamp}] No new products - {len(seen_products)} total seen before")
         
     except Exception as e:
         print(f"Error: {e}")
-        return False
     finally:
         driver.quit()
 
 def monitor():
-    """Main loop - checks continuously"""
-    print("=" * 50)
-    print("🤖 HIP STORE AUTO-BUY BOT")
-    print("=" * 50)
-    print(f"📱 Monitoring: District Vision")
-    print(f"🔍 Products: {', '.join(WANTED)}")
-    print(f"⚡ Speed: Every 10 seconds")
-    print("=" * 50)
+    """Main loop"""
+    load_seen_products()
     
-    # Send startup notification
-    send_notification("✅ Monitor Started", "Now watching for District Vision products")
+    print("=" * 50)
+    print("🆕 NEW PRODUCT MONITOR")
+    print("=" * 50)
+    print(f"📱 Only alerts for NEW products")
+    print(f"🔍 Keywords: {', '.join(WANTED_KEYWORDS)}")
+    print(f"📦 Previously seen: {len(seen_products)} products")
+    print(f"⚡ Checking every 15 seconds")
+    print("=" * 50)
     
     while True:
         try:
-            check_and_buy()
-            
-            if cart_added:
-                print("⏸️  Item found! Pausing for 5 minutes...")
-                time.sleep(300)
-                cart_added = False
-            else:
-                time.sleep(10)
-                
+            check_page()
+            time.sleep(15)
         except Exception as e:
             print(f"Loop error: {e}")
             time.sleep(30)
@@ -183,47 +162,56 @@ def dashboard():
     <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="10">
-    <title>Auto-Buy Monitor</title>
+    <meta http-equiv="refresh" content="15">
+    <title>New Product Monitor</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; background: #000; color: #fff; }}
-        h1 {{ font-size: 24px; margin-bottom: 10px; }}
-        .status {{ color: #00ff00; font-weight: bold; font-size: 18px; margin-bottom: 20px; }}
-        .card {{ background: #1a1a1a; padding: 20px; border-radius: 12px; margin-bottom: 15px; }}
-        .card h3 {{ margin-bottom: 10px; color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }}
-        .found {{ color: #ff4444; font-size: 28px; font-weight: bold; }}
+        body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #000; color: #fff; }}
+        h1 {{ font-size: 22px; margin-bottom: 5px; }}
+        .status {{ color: #00ff00; font-size: 16px; margin-bottom: 20px; }}
+        .card {{ background: #1a1a1a; padding: 18px; border-radius: 12px; margin-bottom: 12px; }}
+        .card h3 {{ color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }}
+        .big-number {{ font-size: 36px; font-weight: bold; color: #ff4444; }}
+        .info {{ color: #aaa; font-size: 13px; margin-top: 15px; }}
         ul {{ list-style: none; }}
-        li {{ padding: 8px 0; font-size: 18px; }}
-        .time {{ color: #666; font-size: 13px; margin-top: 20px; }}
+        li {{ padding: 6px 0; font-size: 16px; }}
+        .time {{ color: #666; font-size: 12px; }}
     </style>
     </head>
     <body>
-    <h1>🤖 District Vision Bot</h1>
-    <p class="status">● ACTIVE - Checking every 10 seconds</p>
+    <h1>🆕 New Product Alerts</h1>
+    <p class="status">● Monitoring - 15s intervals</p>
     
     <div class="card">
-    <h3>Watching For</h3>
+    <h3>Watching For New</h3>
     <ul>
-        {"".join(f"<li>🔍 {w.title()}</li>" for w in WANTED)}
+        {"".join(f"<li>🔍 {k.title()}</li>" for k in WANTED_KEYWORDS)}
     </ul>
     </div>
     
     <div class="card">
-    <h3>Products Found</h3>
-    <p class="found">{len(found_cache)}</p>
+    <h3>Total Products Seen</h3>
+    <p class="big-number">{len(seen_products)}</p>
+    <p class="time">These won't trigger alerts again</p>
     </div>
     
     <div class="card">
-    <h3>Cart Status</h3>
-    <p style="font-size: 20px;">{"🛒 Items Ready!" if cart_added else "⏳ Waiting for stock..."}</p>
+    <h3>Alert Mode</h3>
+    <p style="font-size: 16px;">🔕 Only NEW products trigger notifications</p>
     </div>
     
-    <p class="time">Last check: {datetime.now().strftime('%H:%M:%S')}</p>
-    <p class="time">You'll get a push notification when products are found</p>
+    <p class="info">Last check: {datetime.now().strftime('%H:%M:%S')}<br>Page refreshes every 15 seconds</p>
     </body>
     </html>
     """
+
+@app.route('/reset')
+def reset():
+    """Reset seen products (use if you want fresh alerts)"""
+    global seen_products
+    seen_products = set()
+    save_seen_products()
+    return "✅ Reset complete. All products will be treated as new."
 
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
