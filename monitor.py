@@ -20,7 +20,7 @@ PUSHOVER_USER = "uv4ar371e2hh22m23ozycabbp71mbe"
 PUSHOVER_TOKEN = "ai2ub9o9ey9jaj4hfozp6vtgom167z"
 
 # SPEED SETTINGS
-CHECK_FREQUENCY = 5        # Check every 5 seconds
+CHECK_FREQUENCY = 30        # Check every 30 seconds
 
 # ALERT SETTINGS
 REPEAT_INTERVAL = 30       # Repeat every 30 seconds
