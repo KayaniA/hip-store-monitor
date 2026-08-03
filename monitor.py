@@ -22,32 +22,30 @@ PUSHOVER_TOKEN = "ai2ub9o9ey9jaj4hfozp6vtgom167z"
 CHECK_FREQUENCY = 15
 
 # NOTIFICATION SETTINGS
-NOTIFICATION_REPEAT = True        # Keep sending until you acknowledge
-REPEAT_INTERVAL = 120             # Send every 2 minutes (120 seconds)
-MAX_REPEATS = 10                  # Stop after 10 repeats (20 minutes total)
+NOTIFICATION_REPEAT = True
+REPEAT_INTERVAL = 120
+MAX_REPEATS = 10
 
-# Edit these to match what you want
+# Keywords that catch ALL District Vision products
 WANTED_KEYWORDS = [
     "district-vision",
-    "koharu",
-    "takeyoshi", 
-    "junya",
-    "nagata",
-    "keiichi"
+]
+
+# Products to NEVER alert about
+BLOCKED_PRODUCTS = [
+    "outdoor-track-pants",
 ]
 
 # ============================================
 
 PAGE_URL = "https://m.thehipstore.co.uk/mens/brand/district-vision/"
 
-# Store seen products permanently
 SEEN_FILE = "seen_products.json"
 FOUND_FILE = "pending_alerts.json"
 seen_products = set()
 pending_alerts = {}
 
 def load_seen_products():
-    """Load previously seen products from file"""
     global seen_products, pending_alerts
     try:
         if os.path.exists(SEEN_FILE):
@@ -66,7 +64,6 @@ def load_seen_products():
         pending_alerts = {}
 
 def save_seen_products():
-    """Save seen products to file so we remember across restarts"""
     try:
         with open(SEEN_FILE, 'w') as f:
             json.dump(list(seen_products), f)
@@ -81,7 +78,6 @@ def save_pending_alerts():
         pass
 
 def send_notification(title, message, url="", priority=2):
-    """Send notification with emergency priority (bypasses silent mode)"""
     try:
         data = {
             "token": PUSHOVER_TOKEN,
@@ -108,8 +104,15 @@ def send_notification(title, message, url="", priority=2):
         print(f"Notification error: {e}")
         return False
 
+def is_blocked(href, text):
+    """Check if product should be ignored"""
+    combined = (text + " " + href).lower()
+    for blocked in BLOCKED_PRODUCTS:
+        if blocked.lower() in combined:
+            return True
+    return False
+
 def check_page():
-    """Check page for NEW products only"""
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -124,7 +127,6 @@ def check_page():
         driver.get(PAGE_URL)
         time.sleep(3)
         
-        # Find all links on page
         links = driver.find_elements(By.TAG_NAME, "a")
         
         for link in links:
@@ -133,41 +135,40 @@ def check_page():
                 text = link.text.strip()
                 combined = (text + " " + href).lower()
                 
-                # Check if it matches wanted keywords AND is a product link
+                # Skip blocked products
+                if is_blocked(href, text):
+                    continue
+                
+                # Check if it has "product" in the URL
+                has_product = "/product/" in href.lower() or "/products/" in href.lower()
+                
                 for keyword in WANTED_KEYWORDS:
-                    if keyword in combined and href not in seen_products:
+                    if keyword in combined and href not in seen_products and has_product:
                         
-                        # Only care about actual product links
-                        if "/product/" in href.lower() or "/products/" in href.lower():
-                            
-                            # NEW PRODUCT FOUND!
-                            seen_products.add(href)
-                            save_seen_products()
-                            new_found += 1
-                            
-                            product_name = text or "District Vision Product"
-                            
-                            print(f"🆕 NEW PRODUCT: {product_name}")
-                            print(f"   URL: {href}")
-                            print(f"   Time: {timestamp}")
-                            print(f"   ⚠️  Will repeat alert until acknowledged")
-                            
-                            # Store in pending alerts
-                            pending_alerts[href] = {
-                                "name": product_name,
-                                "url": href,
-                                "found_at": datetime.now().isoformat(),
-                                "repeats_sent": 0
-                            }
-                            save_pending_alerts()
-                            
-                            # Send emergency notification that repeats
-                            send_notification(
-                                "🚨 NEW PRODUCT - TAP TO BUY!",
-                                f"{product_name}\n\nRepeating every {REPEAT_INTERVAL}s until you tap!",
-                                href,
-                                priority=2
-                            )
+                        seen_products.add(href)
+                        save_seen_products()
+                        new_found += 1
+                        
+                        product_name = text or "District Vision Product"
+                        
+                        print(f"🆕 NEW PRODUCT: {product_name}")
+                        print(f"   URL: {href}")
+                        print(f"   Time: {timestamp}")
+                        
+                        pending_alerts[href] = {
+                            "name": product_name,
+                            "url": href,
+                            "found_at": datetime.now().isoformat(),
+                            "repeats_sent": 0
+                        }
+                        save_pending_alerts()
+                        
+                        send_notification(
+                            "🚨 NEW DISTRICT VISION!",
+                            f"{product_name}\n\nTap to view and purchase!",
+                            href,
+                            priority=2
+                        )
             except:
                 continue
         
@@ -180,11 +181,8 @@ def check_page():
         print(f"Error: {e}")
     finally:
         driver.quit()
-    
-    return new_found
 
 def send_pending_alerts():
-    """Re-send alerts for products that haven't been acknowledged"""
     if not NOTIFICATION_REPEAT:
         return
     
@@ -204,21 +202,20 @@ def send_pending_alerts():
                 priority=2
             )
         else:
-            # Max repeats reached, stop alerting
             del pending_alerts[url]
             save_pending_alerts()
-            print(f"⏹️  Stopped alerts for: {info['name']} (max repeats reached)")
+            print(f"⏹️  Stopped alerts for: {info['name']}")
 
 def monitor():
-    """Main loop"""
     load_seen_products()
     
     print("=" * 50)
-    print("🚨 PRODUCT MONITOR WITH REPEAT ALERTS")
+    print("🚨 DISTRICT VISION MONITOR")
     print("=" * 50)
     print(f"📱 Emergency notifications (bypasses silent mode)")
     print(f"🔁 Repeats: Every {REPEAT_INTERVAL}s up to {MAX_REPEATS} times")
-    print(f"🔍 Keywords: {', '.join(WANTED_KEYWORDS)}")
+    print(f"🔍 Catching ALL District Vision products")
+    print(f"🚫 Blocked: {', '.join(BLOCKED_PRODUCTS)}")
     print(f"📦 Previously seen: {len(seen_products)} products")
     print(f"⏱️  Checking every {CHECK_FREQUENCY} seconds")
     print("=" * 50)
@@ -229,7 +226,6 @@ def monitor():
         try:
             check_page()
             
-            # Send repeat alerts for pending products
             if time.time() - last_alert_check >= REPEAT_INTERVAL:
                 send_pending_alerts()
                 last_alert_check = time.time()
@@ -260,7 +256,7 @@ def dashboard():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="{CHECK_FREQUENCY}">
-    <title>Product Monitor</title>
+    <title>District Vision Monitor</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #000; color: #fff; }}
@@ -277,34 +273,36 @@ def dashboard():
     </style>
     </head>
     <body>
-    <h1>🚨 Product Monitor</h1>
+    <h1>🥽 District Vision Monitor</h1>
     <p class="status">● Active - Every {CHECK_FREQUENCY}s</p>
     
     <div class="card">
     <h3>Alert Mode</h3>
     <p>🔁 Repeats every {REPEAT_INTERVAL}s</p>
-    <p>🔢 Max {MAX_REPEATS} repeats ({REPEAT_INTERVAL * MAX_REPEATS}s total)</p>
+    <p>🔢 Max {MAX_REPEATS} repeats</p>
     <p>📱 Emergency priority (bypasses silent)</p>
     </div>
     
     <div class="card">
     <h3>🔴 Pending Alerts ({len(pending_alerts)})</h3>
-    <ul>
-        {pending_html}
-    </ul>
+    <ul>{pending_html}</ul>
     </div>
     
     <div class="card">
-    <h3>Watching For</h3>
+    <h3>Monitoring</h3>
+    <p>🔍 ALL District Vision products</p>
+    </div>
+    
+    <div class="card">
+    <h3>Blocked</h3>
     <ul>
-        {"".join(f"<li>🔍 {k.title()}</li>" for k in WANTED_KEYWORDS)}
+        {"".join(f"<li>🚫 {b.replace('-', ' ').title()}</li>" for b in BLOCKED_PRODUCTS)}
     </ul>
     </div>
     
     <div class="card">
     <h3>Total Products Seen</h3>
     <p class="big-number">{len(seen_products)}</p>
-    <p class="time">Won't alert for these again</p>
     </div>
     
     <p class="info">Last check: {datetime.now().strftime('%H:%M:%S')}<br>Auto-refreshes every {CHECK_FREQUENCY} seconds</p>
@@ -314,22 +312,20 @@ def dashboard():
 
 @app.route('/acknowledge')
 def acknowledge():
-    """Tap this link to stop repeat alerts for all products"""
     global pending_alerts
     count = len(pending_alerts)
     pending_alerts = {}
     save_pending_alerts()
-    return f"✅ Stopped alerts for {count} product(s). You can close this page."
+    return f"✅ Stopped alerts for {count} product(s)."
 
 @app.route('/reset')
 def reset():
-    """Reset seen products (use if you want fresh alerts)"""
     global seen_products, pending_alerts
     seen_products = set()
     pending_alerts = {}
     save_seen_products()
     save_pending_alerts()
-    return "✅ Full reset complete. All products treated as new."
+    return "✅ Full reset complete."
 
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
