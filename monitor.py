@@ -25,7 +25,7 @@ MAX_REPEATS = 100
 PUSHOVER_PRIORITY = 2
 
 # ============================================
-# MONITOR SALE PAGE (sorted by Recommended)
+# PAGES TO MONITOR
 # ============================================
 
 PAGES_TO_WATCH = [
@@ -50,18 +50,26 @@ WANTED_KEYWORDS = [
 # ============================================
 
 STATE_FILE = "page_state.json"
+SEEN_FILE = "seen_products.json"
 FOUND_FILE = "pending_alerts.json"
 page_hashes = {}
+seen_products = set()
 pending_alerts = {}
 
 def load_state():
-    global page_hashes, pending_alerts
+    global page_hashes, seen_products, pending_alerts
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, 'r') as f:
                 page_hashes = json.load(f)
     except:
         page_hashes = {}
+    try:
+        if os.path.exists(SEEN_FILE):
+            with open(SEEN_FILE, 'r') as f:
+                seen_products = set(json.load(f))
+    except:
+        seen_products = set()
     try:
         if os.path.exists(FOUND_FILE):
             with open(FOUND_FILE, 'r') as f:
@@ -73,6 +81,13 @@ def save_state():
     try:
         with open(STATE_FILE, 'w') as f:
             json.dump(page_hashes, f)
+    except:
+        pass
+
+def save_seen():
+    try:
+        with open(SEEN_FILE, 'w') as f:
+            json.dump(list(seen_products), f)
     except:
         pass
 
@@ -115,7 +130,6 @@ def get_page_content(driver, url):
         
         content_parts = []
         
-        # Get all product links
         links = driver.find_elements(By.TAG_NAME, "a")
         for link in links:
             try:
@@ -126,7 +140,6 @@ def get_page_content(driver, url):
             except:
                 pass
         
-        # Get prices
         try:
             prices = driver.find_elements(By.CSS_SELECTOR, "[class*='price'], [class*='Price'], .money")
             for p in prices:
@@ -141,7 +154,7 @@ def get_page_content(driver, url):
     except:
         return None
 
-def check_page():
+def check_pages():
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -152,9 +165,19 @@ def check_page():
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(10)
     
+    new_products_found = False
+    
     try:
         for url in PAGES_TO_WATCH:
             timestamp = datetime.now().strftime('%H:%M:%S')
+            page_name = url.split("/")[-2] if url.endswith("/") else url.split("/")[-1]
+            page_name = page_name.replace("-", " ").title()
+            if "sale" in url.lower():
+                page_name = "💰 Sale"
+            if "search" in url.lower():
+                page_name = "🔍 Search"
+            if "district-vision" in url.lower() and "search" not in url.lower():
+                page_name = "👓 District Vision"
             
             current_hash = get_page_content(driver, url)
             if current_hash is None:
@@ -163,16 +186,30 @@ def check_page():
             previous_hash = page_hashes.get(url)
             
             if previous_hash is None:
+                # First time seeing this page - scan products but DON'T alert
                 page_hashes[url] = current_hash
                 save_state()
                 
                 driver.get(url)
                 time.sleep(1)
                 links = driver.find_elements(By.TAG_NAME, "a")
+                
+                # Record all existing products so we don't alert for them
+                for link in links:
+                    try:
+                        href = link.get_attribute("href") or ""
+                        text = link.text.strip()
+                        if "product" in href.lower() and text:
+                            seen_products.add(href)
+                    except:
+                        pass
+                
+                save_seen()
                 product_count = sum(1 for l in links if "product" in (l.get_attribute("href") or "").lower())
-                print(f"[{timestamp}] 📌 Tracking sale page - Recommended ({product_count} products)")
+                print(f"[{timestamp}] 📌 {page_name}: {product_count} existing products recorded (no alert)")
                 
             elif current_hash != previous_hash:
+                # Page changed - check for NEW products only
                 page_hashes[url] = current_hash
                 save_state()
                 
@@ -180,50 +217,62 @@ def check_page():
                 time.sleep(1)
                 links = driver.find_elements(By.TAG_NAME, "a")
                 
-                product_links = []
-                district_links = []
+                truly_new = []
                 
                 for link in links:
                     try:
                         href = link.get_attribute("href") or ""
                         text = link.text.strip()
                         if "product" in href.lower() and text:
-                            product_links.append({"name": text, "url": href})
-                            
-                            # Check for District Vision
-                            for keyword in WANTED_KEYWORDS:
-                                if keyword.lower() in (text + href).lower():
-                                    district_links.append({"name": text, "url": href})
-                                    break
+                            # Only alert if we've NEVER seen this product before
+                            if href not in seen_products:
+                                seen_products.add(href)
+                                truly_new.append({"name": text, "url": href})
                     except:
                         pass
                 
-                change_id = f"{url}_{current_hash}"
+                save_seen()
                 
-                if change_id not in pending_alerts:
+                if truly_new:
+                    # Check for District Vision keywords
+                    district_items = []
+                    for p in truly_new:
+                        for keyword in WANTED_KEYWORDS:
+                            if keyword.lower() in (p["name"] + p["url"]).lower():
+                                district_items.append(p)
+                                break
+                    
+                    change_id = f"{url}_{datetime.now().timestamp()}"
+                    
                     pending_alerts[change_id] = {
-                        "page": "💰 Sale - Recommended",
+                        "page": page_name,
                         "url": url,
-                        "products": product_links[:10],
+                        "products": truly_new,
                         "time": timestamp,
                         "repeats": 0
                     }
                     save_pending()
                     
-                    if district_links:
-                        product_list = "\n".join([f"• {p['name'][:60]}" for p in district_links[:5]])
-                        message = f"🚨 DISTRICT VISION IN SALE!\n\n{product_list}"
-                        title = "🚨 DISTRICT VISION SALE!"
+                    if district_items:
+                        product_list = "\n".join([f"• {p['name'][:60]}" for p in district_items[:5]])
+                        message = f"🚨 NEW DISTRICT VISION!\n\n{page_name}\n{product_list}"
+                        title = "🚨 NEW DISTRICT VISION!"
                     else:
-                        new_count = len(product_links)
-                        message = f"💰 {new_count} products in sale\n\nNewest items added!"
-                        title = f"💰 Sale Updated - {new_count} items"
+                        product_list = "\n".join([f"• {p['name'][:60]}" for p in truly_new[:5]])
+                        message = f"🆕 {len(truly_new)} NEW products\n\n{page_name}\n{product_list}"
+                        title = f"🆕 New Products!"
                     
-                    print(f"[{timestamp}] 🚨 SALE PAGE CHANGED!")
+                    print(f"[{timestamp}] 🚨 {len(truly_new)} NEW products on {page_name}!")
                     send_notification(title, message, url)
+                    new_products_found = True
+                else:
+                    print(f"[{timestamp}] 📄 {page_name} changed but no NEW products")
+        
+        return new_products_found
         
     except Exception as e:
         print(f"Error: {e}")
+        return False
     finally:
         driver.quit()
 
@@ -235,9 +284,12 @@ def send_repeat_alerts():
             pending_alerts[change_id]["repeats"] = repeats + 1
             save_pending()
             
+            products = info.get("products", [])
+            product_list = "\n".join([f"• {p['name'][:60]}" for p in products[:5]])
+            
             send_notification(
                 f"⏰ Reminder {repeats + 1}/{MAX_REPEATS}",
-                f"💰 Sale page was updated!\n\nTap to view items",
+                f"{info['page']}\n\n{product_list}\n\nTAP TO BUY!",
                 info['url']
             )
         else:
@@ -248,19 +300,21 @@ def monitor():
     load_state()
     
     print("=" * 50)
-    print("💰 HIP STORE SALE MONITOR")
+    print("🆕 HIP STORE - NEW PRODUCTS ONLY")
     print("=" * 50)
     print(f"⏱️  Every {CHECK_FREQUENCY}s")
-    print(f"📍 Sale page - Recommended")
+    print(f"📄 {len(PAGES_TO_WATCH)} pages")
+    print(f"💾 {len(seen_products)} existing products recorded")
+    print(f"🔔 Only alerts for TRULY NEW products")
     print("=" * 50)
     
-    send_notification("💰 Sale Monitor Active", "Watching sale page (Recommended)", "")
+    send_notification("🆕 Monitor Active", f"Tracking new products only\n{len(seen_products)} existing products recorded", "")
     
     last_repeat = time.time()
     
     while True:
         try:
-            check_page()
+            check_pages()
             
             if time.time() - last_repeat >= REPEAT_INTERVAL:
                 send_repeat_alerts()
@@ -284,10 +338,22 @@ def dashboard():
                 🚨 {info['page']}<br>
                 <small>{product_list}</small><br>
                 <small>Repeats: {info.get('repeats', 0)}/{MAX_REPEATS}</small><br>
-                <a href="{info['url']}" style="color:#ff4444;">View sale →</a>
+                <a href="{info['url']}" style="color:#ff4444;">View page →</a>
             </li>"""
     else:
         alerts_html = "<li>No pending alerts</li>"
+    
+    pages_html = ""
+    for url in PAGES_TO_WATCH:
+        name = url.split("/")[-2] if url.endswith("/") else url.split("/")[-1]
+        name = name.replace("-", " ").title()
+        if "sale" in url.lower():
+            name = "💰 Sale"
+        if "search" in url.lower():
+            name = "🔍 Search"
+        if "district-vision" in url.lower() and "search" not in url.lower():
+            name = "👓 District Vision"
+        pages_html += f"<li>📍 {name}</li>"
     
     return f"""
     <!DOCTYPE html>
@@ -296,7 +362,7 @@ def dashboard():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="5">
-    <title>Sale Monitor</title>
+    <title>Hip Store Monitor</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: -apple-system, sans-serif; padding: 20px; background: #000; color: #fff; }}
@@ -310,17 +376,22 @@ def dashboard():
     </style>
     </head>
     <body>
-    <h1>💰 Sale Monitor</h1>
+    <h1>🆕 New Products Only</h1>
     <p class="status">● Checking every {CHECK_FREQUENCY}s</p>
     
     <div class="card">
-    <h3>Watching</h3>
-    <p>📍 Sale page (sorted by Recommended)</p>
-    <p>🔍 District Vision keywords active</p>
+    <h3>Watching ({len(PAGES_TO_WATCH)} pages)</h3>
+    <ul>{pages_html}</ul>
     </div>
     
     <div class="card">
-    <h3>Alerts ({len(pending_alerts)})</h3>
+    <h3>Existing Products Recorded</h3>
+    <p class="warning">{len(seen_products)} products</p>
+    <p style="font-size:12px;color:#888;">Only NEW products will trigger alerts</p>
+    </div>
+    
+    <div class="card">
+    <h3>Pending Alerts ({len(pending_alerts)})</h3>
     <ul>{alerts_html}</ul>
     </div>
     
@@ -339,12 +410,14 @@ def acknowledge():
 
 @app.route('/reset')
 def reset():
-    global page_hashes, pending_alerts
+    global page_hashes, seen_products, pending_alerts
     page_hashes = {}
+    seen_products = set()
     pending_alerts = {}
     save_state()
+    save_seen()
     save_pending()
-    return "✅ Reset complete"
+    return "✅ Full reset complete. All products treated as new on next scan."
 
 if __name__ == '__main__':
     threading.Thread(target=monitor, daemon=True).start()
