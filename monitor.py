@@ -19,13 +19,13 @@ app = Flask(__name__)
 PUSHOVER_USER = "uv4ar371e2hh22m23ozycabbp71mbe"
 PUSHOVER_TOKEN = "ai2ub9o9ey9jaj4hfozp6vtgom167z"
 
-CHECK_FREQUENCY = 30
+CHECK_FREQUENCY = 5
 REPEAT_INTERVAL = 30
 MAX_REPEATS = 100
 PUSHOVER_PRIORITY = 2
 
 # ============================================
-# MONITOR SALE PAGE ONLY (sorted by latest)
+# MONITOR SALE PAGE (sorted by Recommended)
 # ============================================
 
 PAGES_TO_WATCH = [
@@ -167,7 +167,7 @@ def check_page():
                 time.sleep(1)
                 links = driver.find_elements(By.TAG_NAME, "a")
                 product_count = sum(1 for l in links if "product" in (l.get_attribute("href") or "").lower())
-                print(f"[{timestamp}] 📌 Tracking sale page ({product_count} products)")
+                print(f"[{timestamp}] 📌 Tracking sale page - Recommended ({product_count} products)")
                 
             elif current_hash != previous_hash:
                 page_hashes[url] = current_hash
@@ -199,7 +199,7 @@ def check_page():
                 
                 if change_id not in pending_alerts:
                     pending_alerts[change_id] = {
-                        "page": "💰 Sale - Latest",
+                        "page": "💰 Sale - Recommended",
                         "url": url,
                         "products": product_links[:10],
                         "time": timestamp,
@@ -234,7 +234,7 @@ def send_repeat_alerts():
             
             send_notification(
                 f"⏰ Reminder {repeats + 1}/{MAX_REPEATS}",
-                f"💰 Sale page was updated!\n\nTap to view latest items",
+                f"💰 Sale page was updated!\n\nTap to view items",
                 info['url']
             )
         else:
@@ -248,10 +248,10 @@ def monitor():
     print("💰 HIP STORE SALE MONITOR")
     print("=" * 50)
     print(f"⏱️  Every {CHECK_FREQUENCY}s")
-    print(f"📍 https://m.thehipstore.co.uk/sale/?sort=latest")
+    print(f"📍 Sale page - Recommended")
     print("=" * 50)
     
-    send_notification("💰 Sale Monitor Active", "Watching sale page (latest first)", "")
+    send_notification("💰 Sale Monitor Active", "Watching sale page (Recommended)", "")
     
     last_repeat = time.time()
     
@@ -312,7 +312,7 @@ def dashboard():
     
     <div class="card">
     <h3>Watching</h3>
-    <p>📍 Sale page (sorted by latest)</p>
+    <p>📍 Sale page (sorted by Recommended)</p>
     <p>🔍 District Vision keywords active</p>
     </div>
     
