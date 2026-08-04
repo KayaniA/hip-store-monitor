@@ -29,7 +29,7 @@ PUSHOVER_PRIORITY = 2
 # ============================================
 
 PAGES_TO_WATCH = [
-    "https://m.thehipstore.co.uk/sale/?sort=latest",
+    "https://m.thehipstore.co.uk/sale/?sort=Recommended",
 ]
 
 WANTED_KEYWORDS = [
