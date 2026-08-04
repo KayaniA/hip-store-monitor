@@ -19,7 +19,7 @@ app = Flask(__name__)
 PUSHOVER_USER = "uv4ar371e2hh22m23ozycabbp71mbe"
 PUSHOVER_TOKEN = "ai2ub9o9ey9jaj4hfozp6vtgom167z"
 
-CHECK_FREQUENCY = 5
+CHECK_FREQUENCY = 30
 REPEAT_INTERVAL = 30
 MAX_REPEATS = 100
 PUSHOVER_PRIORITY = 2
@@ -30,6 +30,10 @@ PUSHOVER_PRIORITY = 2
 
 PAGES_TO_WATCH = [
     "https://m.thehipstore.co.uk/sale/?sort=Recommended",
+    "https://m.thehipstore.co.uk/sale/?sort=latest",
+    "https://m.thehipstore.co.uk/mens/brand/district-vision/",
+    "https://m.thehipstore.co.uk/mens/new-arrivals/",
+    "https://m.thehipstore.co.uk/search?q=district-vision",
 ]
 
 WANTED_KEYWORDS = [
