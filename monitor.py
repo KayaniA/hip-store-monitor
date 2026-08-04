@@ -32,7 +32,6 @@ PAGES_TO_WATCH = [
     "https://m.thehipstore.co.uk/sale/?sort=Recommended",
     "https://m.thehipstore.co.uk/sale/?sort=latest",
     "https://m.thehipstore.co.uk/mens/brand/district-vision/",
-    "https://m.thehipstore.co.uk/mens/new-arrivals/",
     "https://m.thehipstore.co.uk/search?q=district-vision",
 ]
 
